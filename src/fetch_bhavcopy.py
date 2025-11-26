@@ -1,56 +1,47 @@
+import pandas as pd
 import requests
-import datetime
-from io import BytesIO
+import io
 import zipfile
+from datetime import datetime, timedelta
 
-BASE_URL = "https://archives.nseindia.com/content/fo/"
-
-
-def try_download(url):
-    print(f"Trying: {url}")
-    resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
-    if resp.status_code == 200:
-        return resp.content
-    return None
-
+# -------------------------------------------------------------
+# Fetch NSE FO Bhavcopy and ALWAYS return a Pandas DataFrame
+# -------------------------------------------------------------
 
 def fetch_bhavcopy():
-    today = datetime.date.today()
+    today = datetime.now()
+    attempts = 5
 
-    for i in range(7):  # try last 7 days
-        d = today - datetime.timedelta(days=i)
+    for i in range(attempts):
+        dt = today - timedelta(days=i)
+        date_str = dt.strftime("%d%m%Y")
+        date_csv = dt.strftime("%Y%m%d")
 
-        if d.weekday() >= 5:   # skip Sat-Sun
-            print(f"Skipping weekend: {d}")
-            continue
+        # --- RAW .DAT file
+        url_dat = f"https://archives.nseindia.com/content/fo/FNOBCT{date_str}.DAT"
 
-        dd = d.strftime("%d")
-        mm = d.strftime("%m")
-        yy = d.strftime("%Y")
+        # --- ZIP CSV
+        url_zip = f"https://archives.nseindia.com/content/fo/BhavCopy_NSE_FO_{date_csv}.csv.zip"
 
-        ########## NEW 2025 FILE NAME PATTERNS ##########
+        print(f"Trying: {url_dat}")
+        try:
+            r = requests.get(url_dat, timeout=20)
+            if r.status_code == 200 and len(r.content) > 1000:
+                df = pd.read_csv(io.BytesIO(r.content))
+                return df
+        except:
+            pass
 
-        # 1️⃣ NEW NSE DAT file format
-        dat_name = f"FNO_BC{dd}{mm}{yy}.DAT"
-        dat_url = BASE_URL + dat_name
+        print(f"Trying: {url_zip}")
+        try:
+            r = requests.get(url_zip, timeout=20)
+            if r.status_code == 200:
+                z = zipfile.ZipFile(io.BytesIO(r.content))
+                csv_name = z.namelist()[0]
+                df = pd.read_csv(z.open(csv_name))
+                return df
+        except:
+            pass
 
-        # 2️⃣ NEW ZIP Bhavcopy format
-        zip_name = f"BhavCopy_NSE_FO_0_0_0_{yy}{mm}{dd}_F_0000.csv.zip"
-        zip_url = BASE_URL + zip_name
-
-        ########## Try DAT ##########
-        dat_file = try_download(dat_url)
-        if dat_file:
-            print("✓ DAT file found")
-            return dat_file
-
-        ########## Try ZIP ##########
-        zip_file = try_download(zip_url)
-        if zip_file:
-            print("✓ ZIP file found — extracting")
-            z = zipfile.ZipFile(BytesIO(zip_file))
-            first_csv = z.namelist()[0]
-            return z.read(first_csv)
-
-    raise Exception("No DAT or ZIP bhavcopy found in last 7 days.")
+    raise Exception("Failed to fetch bhavcopy for all attempts.")
     
