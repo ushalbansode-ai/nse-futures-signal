@@ -3,52 +3,34 @@ name: run-analysis
 on:
   workflow_dispatch:
   schedule:
-    # Run every day at 09:15 AM IST (03:45 UTC)
-    - cron: "45 3 * * *"
+    - cron: "15 10 * * 1-5"  # Runs daily at 10:15 AM IST (04:45 UTC)
 
 jobs:
-  analysis:
+  analyse:
     runs-on: ubuntu-latest
 
-    permissions:
-      contents: write   # required for committing output
-      actions: read
-
     steps:
-      # 1. Checkout repo
       - name: Checkout repo
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      # 2. Setup Python
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: '3.10'
 
-      # 3. Install dependencies
       - name: Install requirements
         run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install -r requirements.txt
 
-      # 4. Run strategy script
       - name: Run python main.py
         run: |
           python main.py
 
-      # 5. Commit updated signals
       - name: Commit updated signals
         run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-
-          if [ -n "$(git status --porcelain data/signals/latest_signals.json)" ]; then
-            git add data/signals/latest_signals.json
-            git commit -m "Auto-update signals $(date '+%Y-%m-%d %H:%M')" || true
-            git push
-          else
-            echo "No changes to commit."
-          fi
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@github.com"
+          git add data/signals/latest_signals.json || true
+          git commit -m "Update signals" || true
+          git push || true
           
