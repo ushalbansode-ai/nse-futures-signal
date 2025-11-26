@@ -2,4 +2,7 @@ pandas
 numpy
 requests
 click
+beautifulsoup4
+lxml
+
 
