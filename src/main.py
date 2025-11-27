@@ -116,19 +116,49 @@ def normalize_columns(df):
 # 4) SIGNAL CALCULATION
 # =====================================================
 def compute_signals(df):
+    # Use only actual bhavcopy column names
 
+    # --- Volume ratio (current vol / 20-day avg vol) ---
+    df["vol_ratio"] = (
+        df["TtlTradgVol"].astype(float) /
+        df["TtlTradgVol"].astype(float).rolling(20).mean().fillna(df["TtlTradgVol"])
+    )
+
+    # --- Value ratio (current value / 20-day avg value) ---
+    df["value_ratio"] = (
+        df["TtlTrfVal"].astype(float) /
+        df["TtlTrfVal"].astype(float).rolling(20).mean().fillna(df["TtlTrfVal"])
+    )
+
+    # --- OI Change % ---
     df["oi_change_pct"] = (
-    df["ChngInOpnIntrst"].astype(float) /
-    df["OpnIntrst"].astype(float)
-).replace([float("inf"), -float("inf")], 0)
-    
-    df["vol_ratio"] = df["vol"] / df["vol"].rolling(20).mean().fillna(df["vol"])
+        df["ChngInOpnIntrst"].astype(float) /
+        df["OpnIntrst"].replace(0, pd.NA).astype(float)
+    ).fillna(0)
 
-    df["signal"] = "NEUTRAL"
-    df.loc[(df["vol_ratio"] > 2) & (df["oi_change_pct"] > 0.10), "signal"] = "LONG BUILDUP"
-    df.loc[(df["vol_ratio"] > 2) & (df["oi_change_pct"] < -0.10), "signal"] = "SHORT COVERING"
+    # --- Price Change % ---
+    df["price_change_pct"] = (
+        df["ClsPric"].astype(float) /
+        df["PrvsClsgPric"].replace(0, pd.NA).astype(float) - 1
+    ).fillna(0)
+
+    # --- Basic buy/sell signals ---
+    df["signal"] = "NO_TRADE"
+
+    df.loc[
+        (df["price_change_pct"] > 0.01) &
+        (df["oi_change_pct"] > 0.02),
+        "signal"
+    ] = "LONG_BUY"
+
+    df.loc[
+        (df["price_change_pct"] < -0.01) &
+        (df["oi_change_pct"] < -0.02),
+        "signal"
+    ] = "SHORT_SELL"
 
     return df
+    
 # =====================================================
 # 5) MAIN EXECUTION LOGIC
 # =====================================================
