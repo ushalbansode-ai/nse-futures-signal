@@ -1,130 +1,134 @@
-#!/usr/bin/env python3
 import os
-import json
-import zipfile
 import requests
+import zipfile
+import datetime
 import pandas as pd
-from datetime import datetime, timedelta
 
-DATA_DIR = "data"
-os.makedirs(DATA_DIR, exist_ok=True)
+BASE_DIR = "data"
+OUT_DIR = "data/signals"
 
-BHAV_URL = "https://archives.nseindia.com/content/fo/BhavCopy_NSE_FO_{0}_{1}_{2}_{3}.csv.zip"
-
-# ----------------------------------------------------------------------------
-# Column Mapping — Handles NSE Bhavcopy Variants
-# ----------------------------------------------------------------------------
-COLUMN_MAP = {
-    "last": ["LastPric", "LastPrice", "last"],
-    "prev_close": ["PrvsClsgPric", "PrevClose", "prev_close"],
-    "oi": ["OpnIntrst", "OpenInterest", "oi"],
-    "coi": ["ChngInOpnIntrst", "ChangeInOI", "coi"],
-    "volume": ["TtlTradgVol", "Volume", "total_volume"],
-}
-
-def find_column(df, keys):
-    """Return the first matching column from list"""
-    for k in keys:
-        if k in df.columns:
-            return k
-    raise KeyError(f"Required column missing. Tried: {keys}")
+# Ensure folders exist
+for p in [BASE_DIR, OUT_DIR]:
+    os.makedirs(p, exist_ok=True)
 
 
-# ----------------------------------------------------------------------------
-# Download Latest Working Bhavcopy
-# ----------------------------------------------------------------------------
+# -----------------------------------------------------------
+# 1) Download latest Bhavcopy (NEW NSE FORMAT)
+# -----------------------------------------------------------
+
 def fetch_latest_bhavcopy():
-    today = datetime.now()
-    for i in range(2):
-        d = today - timedelta(days=i)
-        y, m, d2 = d.year, f"{d.month:02d}", f"{d.day:02d}"
+    print("Fetching latest bhavcopy...")
 
-        url = BHAV_URL.format("0", "0", "0", f"{y}{m}{d2}")
-        print(f"Trying: {url}")
+    base_url = (
+        "https://archives.nseindia.com/content/fo/"
+        "BhavCopy_NSE_FO_0_0_0_{date}_F_0000.csv.zip"
+    )
 
-        r = requests.get(url)
-        if r.status_code != 200:
+    today = datetime.date.today()
+    tried = []
+
+    # Try last 4 days
+    for i in range(0, 4):
+        d = today - datetime.timedelta(days=i)
+        date_str = d.strftime("%Y%m%d")
+
+        url = base_url.format(date=date_str)
+        tried.append(url)
+
+        print("Trying:", url)
+
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
+
+        if r.status_code == 200:
+            zip_path = f"{BASE_DIR}/Bhav_{date_str}.zip"
+            open(zip_path, "wb").write(r.content)
+            print("Downloaded:", url)
+
+            # Extract ZIP
+            with zipfile.ZipFile(zip_path, "r") as z:
+                z.extractall(BASE_DIR)
+                extracted_file = z.namelist()[0]
+
+            print("Extracted:", extracted_file)
+
+            return f"{BASE_DIR}/{extracted_file}"
+
+        else:
             print("Failed:", r.status_code)
-            continue
 
-        zip_path = f"{DATA_DIR}/bhavcopy.zip"
-        open(zip_path, "wb").write(r.content)
+    print("Tried URLs:")
+    for u in tried:
+        print(" -", u)
 
-        with zipfile.ZipFile(zip_path, "r") as z:
-            csv_name = z.namelist()[0]
-            print("Extracting:", csv_name)
-            z.extract(csv_name, DATA_DIR)
-
-        csv_path = f"{DATA_DIR}/{csv_name}"
-        print("Reading:", csv_path)
-        df = pd.read_csv(csv_path)
-        print("Rows:", len(df))
-        return df
-
-    raise Exception("No bhavcopy found for last 2 days")
+    raise Exception("No bhavcopy found for last 4 days")
 
 
-# ----------------------------------------------------------------------------
-# Signal Computation
-# ----------------------------------------------------------------------------
+# -----------------------------------------------------------
+# 2) Compute Signals
+# -----------------------------------------------------------
+
 def compute_signals(df):
 
-    # find correct bhavcopy column names
-    col_last = find_column(df, COLUMN_MAP["last"])
-    col_prev = find_column(df, COLUMN_MAP["prev_close"])
-    col_oi = find_column(df, COLUMN_MAP["oi"])
-    col_coi = find_column(df, COLUMN_MAP["coi"])
-    col_vol = find_column(df, COLUMN_MAP["volume"])
+    # Ensure correct columns exist
+    required_cols = [
+        "TckrSymb",
+        "OpnIntrst",
+        "ChngInOpnIntrst",
+        "LastPric",
+        "PrvsClsgPric",
+        "TtlTradgVol",
+    ]
 
-    # Rename to consistent names
-    df = df.rename(columns={
-        col_last: "last",
-        col_prev: "prev_close",
-        col_oi: "oi",
-        col_coi: "coi",
-        col_vol: "volume"
-    })
+    for col in required_cols:
+        if col not in df.columns:
+            raise Exception(f"Missing column: {col}")
 
-    # -----------------------------  
-    # Compute Signals  
-    # -----------------------------
+    # Add momentum
+    df["momentum"] = df["LastPric"] - df["PrvsClsgPric"]
 
-    # 1) Momentum %
-    df["momentum"] = ((df["last"] - df["prev_close"]) / df["prev_close"]) * 100
+    # Add OI Trend
+    df["oi_trend"] = df["ChngInOpnIntrst"]
 
-    # 2) OI Spike
-    df["oi_spike"] = df["coi"] / df["oi"].replace(0, 1)
+    # Volume spike
+    df["vol_spike"] = df["TtlTradgVol"].pct_change().fillna(0)
 
-    # 3) Volume Spike
-    df["vol_spike"] = (df["volume"] / df["volume"].rolling(20).mean()).fillna(1)
-
-    # 4) Reversal Detection
-    df["reversal"] = (
-        (df["momentum"].shift(1) > 0) & (df["momentum"] < 0)
-    ) | (
-        (df["momentum"].shift(1) < 0) & (df["momentum"] > 0)
-    )
+    # BUY Signal
+    df["buy_signal"] = (
+        (df["momentum"] > 0)
+        & (df["oi_trend"] > 0)
+        & (df["vol_spike"] > 0.25)
+    ).astype(int)
 
     return df
 
 
-# ----------------------------------------------------------------------------
-# MAIN
-# ----------------------------------------------------------------------------
+# -----------------------------------------------------------
+# 3) MAIN
+# -----------------------------------------------------------
+
 def main():
     print("Fetching latest bhavcopy...")
-    df = fetch_latest_bhavcopy()
 
-    print(df.columns.tolist())  # Debug (remove later)
+    csv_path = fetch_latest_bhavcopy()
+
+    print("Reading:", csv_path)
+    df = pd.read_csv(csv_path)
+
+    print("Rows:", len(df))
+    print("Columns:", list(df.columns))
 
     print("Computing signals...")
-    df_sig = compute_signals(df)
+    df = compute_signals(df)
 
-    out_path = f"{DATA_DIR}/signals.json"
-    df_sig.to_json(out_path, orient="records")
-    print("Saved:", out_path)
+    out_file = f"{OUT_DIR}/signal_{datetime.date.today()}.csv"
+    df.to_csv(out_file, index=False)
+
+    print("Saved:", out_file)
 
 
+# -----------------------------------------------------------
+# Run
+# -----------------------------------------------------------
 if __name__ == "__main__":
     main()
     
