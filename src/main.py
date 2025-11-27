@@ -12,7 +12,12 @@ BASE_DIR = "data"
 OUT_DIR = "data/signals"
 
 for path in [BASE_DIR, OUT_DIR]:
-    os.makedirs(path, exist_ok=True)
+    try:
+        if not os.path.isdir(path):
+            os.makedirs(path)
+    except FileExistsError:
+        pass
+        
 
 
 # =====================================================
