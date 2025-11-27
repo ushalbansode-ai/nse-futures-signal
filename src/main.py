@@ -1,205 +1,147 @@
 import os
-import json
 import requests
 import zipfile
 import pandas as pd
+from io import BytesIO
 from datetime import datetime, timedelta
 
-# =====================================================
-# 1) ENSURE REQUIRED DIRECTORIES EXIST
-# =====================================================
+# =====================================================================
+# FOLDER CREATION (Fixes GitHub Actions "directory does not exist" error)
+# =====================================================================
+
 BASE_DIR = "data"
 OUT_DIR = "data/signals"
 
-for path in [BASE_DIR, OUT_DIR]:
-    try:
-        if not os.path.isdir(path):
-            os.makedirs(path)
-    except FileExistsError:
-        pass
-        
+os.makedirs(BASE_DIR, exist_ok=True)
+os.makedirs(OUT_DIR, exist_ok=True)
 
+OUT_FILE = f"{OUT_DIR}/latest.csv"
 
-# =====================================================
-# 2) DOWNLOAD NSE BHAVCOPY (ZIP OR CSV)
-# =====================================================
-def try_download(url, save_as):
-    try:
-        print(f"Trying:\n{url}")
-        r = requests.get(url, timeout=15)
-        if r.status_code == 200:
-            with open(save_as, "wb") as f:
-                f.write(r.content)
-            print(f"Downloaded:\n{url}")
-            return True
-        print(f"Failed: {r.status_code}")
-        return False
-    except Exception as e:
-        print(f"Error downloading: {e}")
-        return False
+# =====================================================================
+# BHAVCOPY URL GENERATOR
+# =====================================================================
 
+def get_bhavcopy_url(date_obj):
+    yyyy = date_obj.strftime("%Y")
+    mon = date_obj.strftime("%b").upper()
+    dd = date_obj.strftime("%d")
+    return f"https://archives.nseindia.com/content/fo/BhavCopy_NSE_FO_0_0_0_{yyyy}{mon}{dd}_F_0000.csv.zip"
+
+# =====================================================================
+# DOWNLOAD BHAVCOPY WITH RETRIES
+# =====================================================================
 
 def download_latest_bhavcopy():
-    print("Fetching latest NSE F&O bhavcopy (csv.zip pattern)...")
-
     today = datetime.now()
-    for i in range(3):  # try last 3 days
-        d = today - timedelta(days=i)
-        dd = d.strftime("%d")
-        mm = d.strftime("%m")
-        yyyy = d.strftime("%Y")
+    attempts = 4
 
-        fname = f"fo{dd}{mm}{yyyy}bhav.csv.zip"
-        url = f"https://archives.nseindia.com/content/historical/DERIVATIVES/{yyyy}/{d.strftime('%b').upper()}/{fname}"
-        save_zip = os.path.join(BASE_DIR, fname)
+    for i in range(attempts):
+        dt = today - timedelta(days=i)
+        url = get_bhavcopy_url(dt)
 
-        if try_download(url, save_zip):
-            return save_zip
+        print(f"Trying:\n{url}")
+        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
 
-    print("Trying NSE 'BhavCopy NSE FO' pattern...")
+        if resp.status_code == 200:
+            print("Downloaded:")
+            print(url)
+            return resp.content
 
-    # fallback – NSE's long name format
-    for i in range(3):
-        d = today - timedelta(days=i)
-        fname = f"BhavCopy_NSE_FO_0_0_0_{d.strftime('%Y%m%d')}_F_0000.csv.zip"
-        url = f"https://archives.nseindia.com/content/fo/{fname}"
-        save_zip = os.path.join(BASE_DIR, fname)
-
-        if try_download(url, save_zip):
-            return save_zip
+        print("Failed:", resp.status_code)
 
     raise Exception("Could not download any bhavcopy file!")
 
+# =====================================================================
+# COLUMN MAPPING (Dynamic, Based on NSE Changes)
+# =====================================================================
 
-# =====================================================
-# 3) AUTO–MAP NSE COLUMNS TO STANDARD NAMES
-# =====================================================
 COLUMN_MAP = {
-    "symbol": ["TckrSymb", "SYMBOL"],
+    "symbol": ["TckrSymb", "Symbol"],
     "instr_type": ["FinInstrmTp"],
     "expiry": ["XpryDt"],
     "strike": ["StrkPric"],
     "opt_type": ["OptnTp"],
     "open_int": ["OpnIntrst"],
     "chg_oi": ["ChngInOpnIntrst"],
-    "vol": ["TtlTradgVol"],
-    "value": ["TtlTrfVal"],
+    "vol": ["TtlTrdQty", "TtlTradgVol"],
+    "value": ["TtlTrdVal"],
     "last": ["LastPric"],
     "close": ["ClsPric"],
-    "prev_close": ["PrvsClsgPric"],
-    "settle": ["SttlmPric"],
+    "prev_close": ["PrevClsPric"],
+    "settle": ["SttlmPric"]
 }
 
+def detect_column(df, canonical):
+    for actual in COLUMN_MAP[canonical]:
+        if actual in df.columns:
+            return actual
+    return None
 
-def normalize_columns(df):
-    print("\nRaw columns (sample):", df.columns.tolist()[:15])
+# =====================================================================
+# SIGNAL COMPUTATION
+# =====================================================================
 
-    final_map = {}
-    for canonical, possible in COLUMN_MAP.items():
-        found = None
-        for col in possible:
-            if col in df.columns:
-                found = col
-                break
-        if found is None:
-            raise Exception(f"Missing required column for '{canonical}' – expected any of {possible}")
-        final_map[canonical] = found
-
-    print("\nDetected column mapping (canonical -> actual):")
-    for k, v in final_map.items():
-        print(f"  {k:<10} -> {v}")
-
-    return df.rename(columns=final_map)
-
-
-# =====================================================
-# 4) SIGNAL CALCULATION
-# =====================================================
 def compute_signals(df):
+    # Fix previous close missing issue
+    df["prev_close_safe"] = df["prev_close"].fillna(df["close"])
 
-    # Ensure numeric columns
-    numeric_cols = [
-        "TtlTradgVol", "TtlTrfVal", "OpnIntrst",
-        "ChngInOpnIntrst", "ClsPric", "PrvsClsgPric"
-    ]
+    df["price_change"] = df["close"] - df["prev_close_safe"]
 
-    for col in numeric_cols:
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-
-    # Volume ratio
-    df["vol_ratio"] = df["TtlTradgVol"] / (
-        df["TtlTradgVol"].rolling(20).mean().fillna(df["TtlTradgVol"])
-    )
-
-    # Value ratio
-    df["value_ratio"] = df["TtlTrfVal"] / (
-        df["TtlTrfVal"].rolling(20).mean().fillna(df["TtlTrfVal"])
-    )
-
-    # OI Change %
-    df["oi_change_pct"] = (
-        df["ChngInOpnIntrst"] /
-        df["OpnIntrst"].replace(0, 1)     # avoid divide-by-zero
-    )
-
-    # ---- FIXED PART ----
-    df["prev_close_safe"] = df["PrvsClsgPric"].where(
-        df["PrvsClsgPric"] != 0,
-        df["ClsPric"]
-    )
-
-    df["price_change_pct"] = df["ClsPric"] / df["prev_close_safe"] - 1
-    # ----------------------
-
-    # Signals
-    df["signal"] = "NO_TRADE"
-
-    df.loc[
-        (df["price_change_pct"] > 0.01) &
-        (df["oi_change_pct"] > 0.02),
-        "signal"
-    ] = "LONG_BUY"
-
-    df.loc[
-        (df["price_change_pct"] < -0.01) &
-        (df["oi_change_pct"] < -0.02),
-        "signal"
-    ] = "SHORT_SELL"
+    df["signal"] = df.apply(lambda r:
+                            "LONG" if r["price_change"] > 0 and r["chg_oi"] > 0 else
+                            "SHORT" if r["price_change"] < 0 and r["chg_oi"] < 0 else
+                            "NEUTRAL",
+                            axis=1)
 
     return df
-    
 
-    
-# =====================================================
-# 5) MAIN EXECUTION LOGIC
-# =====================================================
+# =====================================================================
+# MAIN PROCESS
+# =====================================================================
+
 def main():
-    zip_path = download_latest_bhavcopy()
-    print(f"\nExtracting: {zip_path}")
-    with zipfile.ZipFile(zip_path, "r") as z:
-        z.extractall(BASE_DIR)
-        extracted = z.namelist()[0]
+    print("\nFetching latest NSE F&O bhavcopy...\n")
+    zip_bytes = download_latest_bhavcopy()
 
-    csv_path = os.path.join(BASE_DIR, extracted)
-    print("Extracted file:", csv_path)
+    # Extract zip file ================================
+    z = zipfile.ZipFile(BytesIO(zip_bytes))
+    csv_name = z.namelist()[0]
+    print(f"Extracting: {csv_name}")
+    z.extract(csv_name, BASE_DIR)
 
+    csv_path = f"{BASE_DIR}/{csv_name}"
+    print(f"Extracted file: {csv_path}")
+
+    # Load CSV ================================
     df = pd.read_csv(csv_path)
     print("Rows:", len(df))
-    # normalize
-    df = normalize_columns(df)
 
-    # compute signals
-    print("Computing signals...")
+    print("\nRaw columns (sample):", list(df.columns)[:15])
+
+    # Apply dynamic column mapping =====================
+    mapped = {}
+    for key in COLUMN_MAP:
+        col = detect_column(df, key)
+        if col:
+            mapped[key] = col
+
+    print("\nDetected column mapping (canonical -> actual):")
+    for k, v in mapped.items():
+        print(f"{k:12} -> {v}")
+
+    # Rename columns so we work with uniform names
+    df = df.rename(columns={mapped[k]: k for k in mapped})
+
+    # Compute signals ===============================
+    print("\nComputing signals...")
     df = compute_signals(df)
-    # save
-    out_file = os.path.join(OUT_DIR, "fo_signals.csv")
-    df.to_csv(out_file, index=False)
 
-    print("\nSaved:", out_file)
-    print("Job complete.")
-# =====================================================
-# 6) START
-# =====================================================
+    # Save output ===============================
+    df.to_csv(OUT_FILE, index=False)
+    print(f"\nSaved output to: {OUT_FILE}")
+
+# =====================================================================
+
 if __name__ == "__main__":
     main()
-                           
+    
