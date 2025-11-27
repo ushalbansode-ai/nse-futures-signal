@@ -3,12 +3,16 @@ import requests
 import zipfile
 import datetime
 import pandas as pd
+import shutil
 
 BASE_DIR = "data"
 OUT_DIR = "data/signals"
 
-# Ensure folders exist
+# Ensure folders exist - FIXED VERSION
 for p in [BASE_DIR, OUT_DIR]:
+    if os.path.exists(p) and not os.path.isdir(p):
+        # If it's a file, remove it first
+        os.remove(p)
     os.makedirs(p, exist_ok=True)
 
 
@@ -131,4 +135,3 @@ def main():
 # -----------------------------------------------------------
 if __name__ == "__main__":
     main()
-    
