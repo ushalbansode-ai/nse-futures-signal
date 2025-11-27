@@ -30,7 +30,6 @@ jobs:
         run: |
           git config --global user.email "actions@github.com"
           git config --global user.name "GitHub Actions"
-          git add fo_latest.csv fo_signals.json || true
+          git add data/signals/*.csv || true
           git commit -m "Auto update F&O bhavcopy + signals" || true
           git push || true
-          
