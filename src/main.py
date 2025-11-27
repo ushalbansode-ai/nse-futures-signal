@@ -117,7 +117,11 @@ def normalize_columns(df):
 # =====================================================
 def compute_signals(df):
 
-    df["oi_change_pct"] = (df["chg_oi"] / df["open_int"]).replace([float("inf"), -float("inf")], 0)
+    df["oi_change_pct"] = (
+    df["ChngInOpnIntrst"].astype(float) /
+    df["OpnIntrst"].astype(float)
+).replace([float("inf"), -float("inf")], 0)
+    
     df["vol_ratio"] = df["vol"] / df["vol"].rolling(20).mean().fillna(df["vol"])
 
     df["signal"] = "NEUTRAL"
