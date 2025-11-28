@@ -1,12 +1,8 @@
-# Data directories (auto-created)
+# Data
 data/
-outputs/
-
-# Downloaded files
 *.csv
 *.zip
 *.json
-*.txt
 
 # Python
 __pycache__/
