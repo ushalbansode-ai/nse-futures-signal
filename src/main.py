@@ -48,7 +48,7 @@ class SmartTradingCalendar:
 class EnhancedDataParser:
     def __init__(self):
         self.futures_keywords = ['FUT', 'FUTSTK', 'FUTIDX']
-        self.options_keywords = ['OPT', 'OPTSTK', 'OPTIDX']
+        self.options_keywords = ['OPT', 'OPTSTK', 'OPTIDX', 'CE', 'PE']
     
     def parse_instruments(self, df):
         """Parse futures and options contracts from dataframe"""
@@ -58,8 +58,13 @@ class EnhancedDataParser:
         if df.empty:
             return futures_df, options_df
         
-        # Try different column names for instrument type
-        instrument_columns = ['Instrument', 'INSTRUMENT', 'instrument', 'SECURITY TYPE']
+        print("🔍 DATA STRUCTURE DEBUG:")
+        print(f"📏 Shape: {df.shape}")
+        print(f"📋 Columns: {df.columns.tolist()}")
+        
+        # NSE specific column names based on your error output
+        instrument_columns = ['Instrument', 'INSTRUMENT', 'instrument', 'SECURITY TYPE', 
+                             'OptionType', 'OPTION_TYP', 'Ticker', 'SYMBOL']
         instrument_col = None
         
         for col in instrument_columns:
@@ -68,8 +73,8 @@ class EnhancedDataParser:
                 break
         
         if instrument_col is None:
-            print("❌ No instrument column found. Available columns:", df.columns.tolist())
-            return futures_df, options_df
+            print("❌ No standard instrument column found. Trying alternative methods...")
+            return self.parse_using_alternative_methods(df)
         
         print(f"🔍 Using instrument column: {instrument_col}")
         print(f"📊 Unique instruments: {df[instrument_col].unique()}")
@@ -89,6 +94,51 @@ class EnhancedDataParser:
         # Remove duplicates
         futures_df = futures_df.drop_duplicates()
         options_df = options_df.drop_duplicates()
+        
+        return futures_df, options_df
+    
+    def parse_using_alternative_methods(self, df):
+        """Alternative parsing methods for NSE data"""
+        futures_df = pd.DataFrame()
+        options_df = pd.DataFrame()
+        
+        print("🔄 Trying alternative parsing methods...")
+        
+        # Method 1: Check for OptionType column (CE/PE for options)
+        if 'OptionType' in df.columns:
+            print("✅ Found OptionType column")
+            options_df = df[df['OptionType'].isin(['CE', 'PE'])]
+            # Futures might be rows without OptionType and with specific symbols
+            futures_mask = df['OptionType'].isna() & df['Ticker'].str.contains('FUT', na=False)
+            futures_df = df[futures_mask]
+            return futures_df, options_df
+        
+        # Method 2: Check for OPTION_TYP column
+        elif 'OPTION_TYP' in df.columns:
+            print("✅ Found OPTION_TYP column")
+            options_df = df[df['OPTION_TYP'].isin(['CE', 'PE'])]
+            return futures_df, options_df
+        
+        # Method 3: Look for CE/PE in any string column
+        else:
+            print("🔍 Searching for CE/PE patterns in all columns...")
+            for col in df.columns:
+                if df[col].dtype == 'object':
+                    ce_mask = df[col].astype(str).str.contains('CE', case=False, na=False)
+                    pe_mask = df[col].astype(str).str.contains('PE', case=False, na=False)
+                    if ce_mask.any() or pe_mask.any():
+                        options_df = df[ce_mask | pe_mask]
+                        print(f"✅ Found options in column: {col}")
+                        break
+            
+            # Look for FUT in any string column for futures
+            for col in df.columns:
+                if df[col].dtype == 'object':
+                    fut_mask = df[col].astype(str).str.contains('FUT', case=False, na=False)
+                    if fut_mask.any():
+                        futures_df = df[fut_mask]
+                        print(f"✅ Found futures in column: {col}")
+                        break
         
         return futures_df, options_df
 
@@ -115,7 +165,7 @@ def main():
         
         # Step 1: Fetch latest data for the analysis date
         print("\n📥 Step 1: Fetching bhavcopy...")
-        csv_path = fetcher.fetch_latest_bhavcopy()  # This might need modification to accept date
+        csv_path = fetcher.fetch_latest_bhavcopy()
         
         # Step 2: Process current day data with enhanced parsing
         print("\n🔧 Step 2: Processing data...")
@@ -124,13 +174,29 @@ def main():
         # Use enhanced parser for better instrument detection
         futures_df, options_df = parser.parse_instruments(df)
         
-        # Fallback to original processor if enhanced parser finds nothing
+        # If still no data found, try direct column inspection
         if len(futures_df) == 0 and len(options_df) == 0:
-            print("🔄 Using original parser as fallback...")
-            futures_df, options_df = processor.separate_futures_options(df)
-        
+            print("🔄 No instruments found with enhanced parser. Inspecting data directly...")
+            
+            # Try original processor as final fallback
+            print("🔄 Using original parser as final fallback...")
+            try:
+                futures_df, options_df = processor.separate_futures_options(df)
+            except Exception as e:
+                print(f"❌ Original parser also failed: {e}")
+
         print(f"✅ Futures contracts found: {len(futures_df)}")
         print(f"✅ Options contracts found: {len(options_df)}")
+
+        # If we found data, show some samples
+        if len(futures_df) > 0:
+            symbol_col = next((col for col in ['Symbol', 'SYMBOL', 'Ticker'] if col in futures_df.columns), None)
+            if symbol_col:
+                print(f"📊 Futures sample symbols: {futures_df[symbol_col].head(3).tolist()}")
+        if len(options_df) > 0:
+            symbol_col = next((col for col in ['Symbol', 'SYMBOL', 'Ticker'] if col in options_df.columns), None)
+            if symbol_col:
+                print(f"📊 Options sample symbols: {options_df[symbol_col].head(3).tolist()}")
         
         # Step 3: Load PREVIOUS day data
         print("\n📚 Step 3: Loading PREVIOUS day data for comparison...")
