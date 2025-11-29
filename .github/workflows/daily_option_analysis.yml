@@ -1,8 +1,8 @@
-name: Daily Option Strategy Analysis
+name: Daily Combined Futures & Options Analysis
 
 on:
   schedule:
-    - cron: "50 10 * * 1-5"   # 16:20 IST ≈ 10:50 UTC, Monday-Friday
+    - cron: "00 14 * * 1-5"   # 19:30 IST ≈ 14:00 UTC, Monday-Friday
   workflow_dispatch:          # Manual trigger
 
 jobs:
@@ -24,9 +24,9 @@ jobs:
           
       - name: Create Output Directories
         run: |
-          mkdir -p data/raw data/processed outputs/signals outputs/reports
+          mkdir -p data/raw data/processed data/historical outputs/signals outputs/reports
           
-      - name: Run Option Strategy Analysis
+      - name: Run Combined Futures & Options Analysis
         run: |
           python run.py
           
@@ -40,5 +40,5 @@ jobs:
           git config --global user.email "actions@github.com"
           git config --global user.name "GitHub Actions"
           git add outputs/
-          git commit -m "Auto: Option strategy results for $(date +%Y-%m-%d)" || echo "No changes to commit"
+          git commit -m "Auto: Combined Futures+Options analysis for $(date +%Y-%m-%d)" || echo "No changes to commit"
           git push || echo "Nothing to push"
