@@ -1,0 +1,58 @@
+name: Simple Artifact Test
+
+on: [workflow_dispatch]
+
+jobs:
+  simple-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Check for existing artifacts
+      run: |
+        echo "🔍 Checking if artifacts exist..."
+        echo "Artifact name: nse-historical-data"
+        echo ""
+        echo "How to check manually:"
+        echo "1. Go to your repository"
+        echo "2. Click on 'Actions' tab"
+        echo "3. Look for 'Daily NSE Option Analysis' workflow"
+        echo "4. Click on latest run"
+        echo "5. Scroll down to 'Artifacts' section"
+        echo "6. You should see 'nse-historical-data' if any run succeeded"
+    
+    - name: Try to download
+      uses: actions/download-artifact@v4
+      continue-on-error: true
+      with:
+        name: nse-historical-data
+        path: data/processed/
+    
+    - name: Show results
+      run: |
+        echo "=== Download Results ==="
+        if [ -d "data/processed" ]; then
+          echo "✅ Directory created"
+          echo ""
+          echo "=== Contents ==="
+          ls -la data/processed/
+          echo ""
+          echo "=== File Details ==="
+          if ls data/processed/*.csv 1>/dev/null 2>&1; then
+            echo "CSV files found:"
+            for file in data/processed/*.csv; do
+              echo "- $(basename $file) ($(wc -l < $file) lines)"
+            done
+          else
+            echo "No CSV files found (artifact empty or doesn't exist)"
+          fi
+        else
+          echo "❌ Directory not created (artifact doesn't exist)"
+        fi
+        echo ""
+        echo "=== Next Steps ==="
+        echo "1. Run 'Daily NSE Option Analysis' workflow first"
+        echo "2. Wait for it to complete"
+        echo "3. Then run this test again"
+        echo "4. You should see historical data files"
