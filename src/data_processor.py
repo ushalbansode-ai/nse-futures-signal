@@ -119,63 +119,63 @@ class DataProcessor:
     def load_previous_data(self):
         """Load previous trading day data for comparison"""
         print("    Looking for previous trading day data...")
+        print(f"    Processed data directory: {self.processed_data_dir}")
         
-        # Check if processed directory exists
         if not os.path.exists(self.processed_data_dir):
-            print("    No processed data directory found")
+            print("    ❌ Processed data directory does not exist")
             return None, None, None
         
-        # Get all CSV files in processed directory
-        csv_files = glob.glob(os.path.join(self.processed_data_dir, "*.csv"))
+        # List all CSV files
+        csv_files = []
+        for file in os.listdir(self.processed_data_dir):
+            if file.startswith('nse_fo_') and file.endswith('.csv'):
+                csv_files.append(file)
+        
+        print(f"    Found {len(csv_files)} historical data files")
         
         if not csv_files:
-            print("    No previous trading data found (no CSV files)")
-            print("    PREVIOUS DAY DATA: Not available (first run or weekend)")
+            print("    No previous trading data found")
             return None, None, None
         
-        # Sort files by modification time (newest first)
-        csv_files.sort(key=os.path.getmtime, reverse=True)
+        # Sort by date (newest first)
+        csv_files.sort(reverse=True)
         
-        # Skip today's file if it exists and try to find yesterday's
+        # Try to find the most recent file that's NOT from today
         today_str = datetime.now().strftime('%Y%m%d')
         
         for csv_file in csv_files:
-            # Extract date from filename
-            filename = os.path.basename(csv_file)
-            
-            # Check if it's a historical data file
-            if filename.startswith('nse_fo_') and filename.endswith('.csv'):
-                date_str = filename.replace('nse_fo_', '').replace('.csv', '')
+            # Extract date from filename (nse_fo_20251202.csv -> 20251202)
+            try:
+                file_date = csv_file.replace('nse_fo_', '').replace('.csv', '')
                 
-                # Skip today's file
-                if date_str == today_str:
-                    print(f"    Skipping today's file: {filename}")
+                if file_date == today_str:
+                    print(f"    Skipping today's file: {csv_file}")
                     continue
                 
-                try:
-                    # Load the data
-                    print(f"    Loading previous data from: {csv_file}")
-                    combined_data = pd.read_csv(csv_file)
+                # Load this file
+                filepath = os.path.join(self.processed_data_dir, csv_file)
+                print(f"    Loading historical data from: {csv_file}")
+                
+                combined_data = pd.read_csv(filepath)
+                
+                # Separate futures and options
+                if 'instrument_type' in combined_data.columns:
+                    previous_futures = combined_data[combined_data['instrument_type'] == 'futures'].copy()
+                    previous_options = combined_data[combined_data['instrument_type'] == 'options'].copy()
                     
-                    # Separate futures and options
-                    if 'instrument_type' in combined_data.columns:
-                        previous_futures = combined_data[combined_data['instrument_type'] == 'futures'].copy()
-                        previous_options = combined_data[combined_data['instrument_type'] == 'options'].copy()
-                        
-                        print(f"    Found historical data from: {date_str}")
-                        print(f"    Previous futures: {len(previous_futures)}, options: {len(previous_options)}")
-                        
-                        return previous_futures, previous_options, date_str
-                    else:
-                        print(f"    ❌ File {filename} doesn't have 'instrument_type' column")
-                        continue
-                        
-                except Exception as e:
-                    print(f"    ❌ Error loading {filename}: {e}")
+                    print(f"    ✅ Loaded previous data from: {file_date}")
+                    print(f"    Previous futures: {len(previous_futures)}, options: {len(previous_options)}")
+                    
+                    return previous_futures, previous_options, file_date
+                else:
+                    print(f"    ⚠️ File {csv_file} doesn't have 'instrument_type' column")
                     continue
+                    
+            except Exception as e:
+                print(f"    ❌ Error loading {csv_file}: {e}")
+                continue
         
         print("    No valid previous trading data found")
-        print("    PREVIOUS DAY DATA: Not available")
         return None, None, None
     
     def save_current_data(self, futures_data, options_data):
@@ -192,14 +192,44 @@ class DataProcessor:
             # Combine data
             combined_data = pd.concat([futures_data, options_data], ignore_index=True)
             
-            # Generate filename with current date
-            today = datetime.now().strftime('%Y%m%d')
-            filename = f"nse_fo_{today}.csv"
+            # Get trading date from the data
+            # The 'TradDt' column contains the actual trading date in format '02-DEC-2025'
+            if 'TradDt' in combined_data.columns and len(combined_data) > 0:
+                # Get the trading date from the first row
+                trading_date_str = str(combined_data['TradDt'].iloc[0])
+                
+                # Convert from '02-DEC-2025' to '20251202'
+                try:
+                    from datetime import datetime
+                    # Handle different date formats
+                    if '-' in trading_date_str:
+                        # Format: DD-MMM-YYYY
+                        trading_date = datetime.strptime(trading_date_str, '%d-%b-%Y')
+                    elif '/' in trading_date_str:
+                        # Format: DD/MM/YYYY
+                        trading_date = datetime.strptime(trading_date_str, '%d/%m/%Y')
+                    else:
+                        # Unknown format, use today
+                        trading_date = datetime.now()
+                    
+                    trading_date_str_formatted = trading_date.strftime('%Y%m%d')
+                    print(f"    Extracted trading date from data: {trading_date_str} -> {trading_date_str_formatted}")
+                    
+                except Exception as e:
+                    print(f"    ⚠️ Could not parse date '{trading_date_str}': {e}")
+                    trading_date_str_formatted = datetime.now().strftime('%Y%m%d')
+            else:
+                # Fallback to today's date
+                trading_date_str_formatted = datetime.now().strftime('%Y%m%d')
+                print(f"    ⚠️ Using current date: {trading_date_str_formatted}")
+            
+            # Generate filename with TRADING date
+            filename = f"nse_fo_{trading_date_str_formatted}.csv"
             filepath = os.path.join(self.processed_data_dir, filename)
             
             # Save as CSV
             combined_data.to_csv(filepath, index=False)
-            print(f"    Saved historical data for {today}")
+            print(f"    Saved historical data as: {filename}")
             
             # Also create a README for the data directory
             readme_path = os.path.join(self.processed_data_dir, "README.txt")
