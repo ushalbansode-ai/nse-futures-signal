@@ -30,13 +30,12 @@ jobs:
         mkdir -p outputs/reports
         echo "Directories created successfully"
     
-    - name: Download previous historical data
+    - name: Download previous historical data (if exists)
       uses: actions/download-artifact@v4
-      if: always()
+      continue-on-error: true  # This is for the STEP, not the action
       with:
         name: nse-historical-data
         path: data/processed/
-        continue-on-error: true
     
     - name: Check downloaded historical data
       run: |
@@ -49,20 +48,8 @@ jobs:
           echo ""
           echo "=== CSV files found ==="
           find data/processed -name "*.csv" -type f | sort
-          echo ""
-          echo "=== File details ==="
-          for csv_file in $(find data/processed -name "*.csv" -type f | sort); do
-            echo "File: $(basename $csv_file)"
-            echo "  Size: $(wc -l < "$csv_file") lines"
-            echo "  Date in filename: $(basename $csv_file | sed 's/nse_fo_//;s/.csv//')"
-            if [ -f "$csv_file" ]; then
-              # Check first few lines for date
-              echo "  First line: $(head -1 "$csv_file" | cut -c1-50)..."
-            fi
-            echo ""
-          done
         else
-          echo "❌ No processed data directory found"
+          echo "❌ No processed data directory found (first run)"
         fi
     
     - name: Run analysis
@@ -74,7 +61,7 @@ jobs:
         name: nse-historical-data
         path: data/processed/
         retention-days: 90
-        if-no-files-found: warn
+        if-no-files-found: ignore
     
     - name: List generated files
       run: |
