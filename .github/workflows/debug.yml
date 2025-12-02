@@ -1,0 +1,87 @@
+name: Debug Historical Data
+
+on: [workflow_dispatch]
+
+jobs:
+  debug-data:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install pandas
+      run: pip install pandas
+    
+    - name: Create debug script
+      run: |
+        cat > check_data.py << 'EOF'
+        import os
+        import glob
+        from datetime import datetime
+        
+        print("🔍 DEBUG: Checking historical data directory...")
+        
+        processed_dir = "data/processed"
+        
+        if not os.path.exists(processed_dir):
+            print(f"❌ Directory '{processed_dir}' does not exist!")
+            exit(1)
+        
+        print(f"✅ Directory exists: {processed_dir}")
+        
+        # List all files
+        all_files = os.listdir(processed_dir)
+        print(f"\n📄 All files in directory ({len(all_files)} total):")
+        for file in sorted(all_files):
+            file_path = os.path.join(processed_dir, file)
+            if os.path.isfile(file_path):
+                size = os.path.getsize(file_path)
+                modified = datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%Y-%m-%d %H:%M')
+                print(f"  - {file} ({size:,} bytes, modified: {modified})")
+            else:
+                print(f"  - {file}/ (directory)")
+        
+        # Check CSV files
+        csv_files = glob.glob(os.path.join(processed_dir, "*.csv"))
+        print(f"\n📊 CSV files found: {len(csv_files)}")
+        
+        if csv_files:
+            print("\n📁 CSV File Details:")
+            for csv_file in sorted(csv_files):
+                filename = os.path.basename(csv_file)
+                size_mb = os.path.getsize(csv_file) / (1024 * 1024)
+                modified = datetime.fromtimestamp(os.path.getmtime(csv_file)).strftime('%Y-%m-%d %H:%M')
+                
+                print(f"\n  File: {filename}")
+                print(f"  Size: {size_mb:.2f} MB")
+                print(f"  Modified: {modified}")
+                
+                try:
+                    import pandas as pd
+                    df = pd.read_csv(csv_file, nrows=5)  # Read just first 5 rows
+                    print(f"  Columns: {list(df.columns)}")
+                    
+                    if 'instrument_type' in df.columns:
+                        futures_count = (df['instrument_type'] == 'futures').sum()
+                        options_count = (df['instrument_type'] == 'options').sum()
+                        print(f"  Sample - Futures: {futures_count}, Options: {options_count}")
+                    
+                    if 'TradDt' in df.columns and len(df) > 0:
+                        print(f"  Trading Date in data: {df['TradDt'].iloc[0]}")
+                        
+                except Exception as e:
+                    print(f"  ❌ Error reading CSV: {str(e)[:100]}")
+        else:
+            print("❌ No CSV files found!")
+        
+        print("\n🔍 Directory tree:")
+        os.system("find data/ -type f | sort")
+        EOF
+    
+    - name: Run debug script
+      run: python check_data.py
