@@ -12,14 +12,6 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     
-    - name: Download previous historical data
-      uses: actions/download-artifact@v4
-      if: always()
-      with:
-        name: nse-historical-data
-        path: data/processed/
-        continue-on-error: true
-    
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
@@ -38,15 +30,37 @@ jobs:
         mkdir -p outputs/reports
         echo "Directories created successfully"
     
-    - name: Check existing historical data
+    - name: Download previous historical data
+      uses: actions/download-artifact@v4
+      if: always()
+      with:
+        name: nse-historical-data
+        path: data/processed/
+        continue-on-error: true
+    
+    - name: Check downloaded historical data
       run: |
-        echo "=== Checking existing historical data ==="
+        echo "=== Checking downloaded historical data ==="
         if [ -d "data/processed" ]; then
           echo "✅ Processed data directory exists"
+          echo ""
+          echo "=== Files in data/processed ==="
           ls -la data/processed/
           echo ""
           echo "=== CSV files found ==="
           find data/processed -name "*.csv" -type f | sort
+          echo ""
+          echo "=== File details ==="
+          for csv_file in $(find data/processed -name "*.csv" -type f | sort); do
+            echo "File: $(basename $csv_file)"
+            echo "  Size: $(wc -l < "$csv_file") lines"
+            echo "  Date in filename: $(basename $csv_file | sed 's/nse_fo_//;s/.csv//')"
+            if [ -f "$csv_file" ]; then
+              # Check first few lines for date
+              echo "  First line: $(head -1 "$csv_file" | cut -c1-50)..."
+            fi
+            echo ""
+          done
         else
           echo "❌ No processed data directory found"
         fi
@@ -67,8 +81,11 @@ jobs:
         echo "=== Generated Reports ==="
         find outputs/ -type f -name "*.txt" -o -name "*.csv" | sort || echo "No reports found"
         echo ""
-        echo "=== New Historical Data ==="
-        find data/processed -name "*.csv" -type f | sort || echo "No new historical data"
+        echo "=== Current Historical Data ==="
+        find data/processed -name "*.csv" -type f | sort || echo "No historical data files"
+        echo ""
+        echo "=== Artifact Status ==="
+        echo "Historical data will be available for next run"
     
     - name: Commit and push results
       env:
@@ -78,5 +95,5 @@ jobs:
         git config --local user.name "GitHub Action"
         git add outputs/
         git status
-        git commit -m "Update NSE analysis reports $(date +'%Y-%m-%d %H:%M:%S')" || echo "No changes to commit"
-        git push
+        git diff --cached --quiet || (git commit -m "Update NSE analysis reports $(date +'%Y-%m-%d %H:%M:%S')" && git push)
+        echo "✅ Reports committed to repository"
