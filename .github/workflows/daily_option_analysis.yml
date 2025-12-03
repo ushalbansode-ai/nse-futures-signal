@@ -72,110 +72,6 @@ jobs:
       run: python run.py
       continue-on-error: false
     
-    - name: Compare with yesterday's data
-      run: |
-        echo "=== Comparing Today vs Yesterday ==="
-        echo ""
-        
-        # Get today's date
-        TODAY=$(date +'%Y-%m-%d')
-        YESTERDAY=$(date -d "yesterday" +'%Y-%m-%d')
-        
-        echo "📅 Today: $TODAY"
-        echo "📅 Yesterday: $YESTERDAY"
-        echo ""
-        
-        # Check if we have yesterday's data
-        YESTERDAY_FILE=$(find data/processed -name "*${YESTERDAY}*.csv" -type f | head -1)
-        
-        if [ -f "$YESTERDAY_FILE" ]; then
-          echo "✅ Found yesterday's data: $(basename $YESTERDAY_FILE)"
-          echo ""
-          
-          # Find today's new data
-          TODAY_FILES=$(find data/processed -name "*${TODAY}*.csv" -type f)
-          
-          if [ -n "$TODAY_FILES" ]; then
-            echo "✅ Found today's data"
-            
-            # Create comparison directory
-            mkdir -p data/comparison
-            
-            # Run comparison logic (you can customize this)
-            echo "Running comparison analysis..."
-            
-            # Example: Create a simple comparison report
-            python3 -c "
-import pandas as pd
-import os
-from datetime import datetime
-
-# Get today and yesterday dates
-today = pd.Timestamp('$TODAY')
-yesterday = pd.Timestamp('$YESTERDAY')
-
-# Look for data files
-today_files = [f for f in os.listdir('data/processed') if '$TODAY' in f and f.endswith('.csv')]
-yesterday_files = [f for f in os.listdir('data/processed') if '$YESTERDAY' in f and f.endswith('.csv')]
-
-if today_files and yesterday_files:
-    # Read data (simplified - you should adjust based on your data structure)
-    try:
-        # Try to read the first file of each day
-        df_today = pd.read_csv(f'data/processed/{today_files[0]}')
-        df_yesterday = pd.read_csv(f'data/processed/{yesterday_files[0]}')
-        
-        # Basic comparison
-        comparison_report = []
-        comparison_report.append('=== NSE DATA COMPARISON REPORT ===')
-        comparison_report.append(f'Date: {today.date()}')
-        comparison_report.append(f'Comparing: {yesterday.date()} → {today.date()}')
-        comparison_report.append('')
-        comparison_report.append(f'Today\'s records: {len(df_today)}')
-        comparison_report.append(f'Yesterday\'s records: {len(df_yesterday)}')
-        comparison_report.append(f'Change: {len(df_today) - len(df_yesterday)} records')
-        
-        # Save comparison report
-        with open('outputs/comparison_report.txt', 'w') as f:
-            f.write('\n'.join(comparison_report))
-        
-        print('✅ Comparison report generated')
-        
-        # Generate signals based on comparison
-        signals = []
-        signals.append('=== SIGNALS GENERATED ===')
-        signals.append(f'Generated at: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
-        signals.append('')
-        
-        # Example signal logic (customize based on your data)
-        if len(df_today) > len(df_yesterday):
-            signals.append('📈 SIGNAL: Increased data volume detected')
-            signals.append('   Action: Consider bullish positions')
-        elif len(df_today) < len(df_yesterday):
-            signals.append('📉 SIGNAL: Decreased data volume detected')
-            signals.append('   Action: Consider bearish positions')
-        else:
-            signals.append('📊 SIGNAL: Stable data volume')
-            signals.append('   Action: Maintain current positions')
-        
-        # Save signals
-        with open('outputs/signals/daily_signals.txt', 'w') as f:
-            f.write('\n'.join(signals))
-        
-        print('✅ Signals generated')
-        
-    except Exception as e:
-        print(f'❌ Error in comparison: {e}')
-else:
-    print('⚠️ Missing data files for comparison')
-"
-          else
-            echo "⚠️ No today's data found for comparison"
-          fi
-        else
-          echo "⚠️ No yesterday's data found for comparison (first day?)"
-        fi
-    
     - name: Upload historical data artifact
       uses: actions/upload-artifact@v4
       if: success()
@@ -212,15 +108,11 @@ else:
         echo "2. nse-analysis-reports - Analysis reports"
         echo "3. nse-comparison-results - Day-over-day comparison"
         echo ""
-        echo "📈 Signals Generated:"
-        if [ -f "outputs/signals/daily_signals.txt" ]; then
-          cat outputs/signals/daily_signals.txt
-        else
-          echo "No signals file found"
-        fi
-        echo ""
         echo "📁 Files Created:"
         find outputs/ -type f | sort || echo "No output files"
+        echo ""
+        echo "📅 Data Files:"
+        find data/processed -name "*.csv" -type f | sort || echo "No data files"
         echo ""
         echo "⏰ Next Run: Tomorrow at 2:00 PM IST"
         echo ""
@@ -235,7 +127,7 @@ else:
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         
-        # Check if there are any changes in outputs/
+        # Check if there are any changes
         if git diff --quiet -- outputs/; then
           echo "✅ No changes in outputs to commit"
         else
