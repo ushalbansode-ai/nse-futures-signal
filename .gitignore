@@ -1,7 +1,35 @@
+# Python
 __pycache__/
-data/raw/*
-data/raw/zips/*
-data/history/merged/all_days.parquet
-.env
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Data files
+data/raw/zips/
+data/raw/*.csv
+!data/raw/.gitkeep
+data/previous.csv
+data/signals.csv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+temp/
+tmp/
